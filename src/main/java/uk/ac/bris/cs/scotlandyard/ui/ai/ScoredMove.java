@@ -12,8 +12,11 @@ class ScoredMove implements Comparable{
     }
 
     @Override
-    public boolean equals(Object obj) {
-        return score == ((ScoredMove) obj).score;
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ScoredMove that = (ScoredMove) o;
+        return score == that.score;
     }
 
     @Override

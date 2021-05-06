@@ -1,14 +1,9 @@
 package uk.ac.bris.cs.scotlandyard.ui.ai;
-
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-
 import javax.annotation.Nonnull;
-
-
 import com.google.common.collect.ImmutableList;
-import com.google.common.graph.ImmutableValueGraph;
 import io.atlassian.fugue.Pair;
 import uk.ac.bris.cs.scotlandyard.model.*;
 
@@ -45,14 +40,8 @@ public class MyAi implements Ai {
 			System.out.println(move.move + " - " + topMoves.get(i).score);
 		}
 
-		Collections.sort(topMoves);
-		Collections.reverse(topMoves);
-
-		Move bestMove = topMoves.get(0).move;
-
-		System.out.println("\n");
-		System.out.println(topMoves.get(0).score+ bestMove.toString());
-		System.out.println("\n\n\n\n");
+		//Pick move with the highest score
+		Move bestMove = Collections.max(topMoves).move;
 		return bestMove;
 	}
 
@@ -91,24 +80,14 @@ public class MyAi implements Ai {
 		return withoutDuplicates;
 	}
 
-	int getMin(List<Integer> list){
-		int min = list.get(0);
-
-		for(Integer i : list){
-			if(i < min) min = i;
-		}
-
-		return min;
-	}
-
-	int getSum(List<Integer> list){
-		int sum = 0;
+	float getAvg(List<Integer> list){
+		float sum = 0;
 
 		for(Integer i : list){
 			sum += i;
 		}
 
-		return sum;
+		return sum / list.size();
 	}
 
 	float score(Board board, Move move){
@@ -121,11 +100,10 @@ public class MyAi implements Ai {
 		List<Integer> oldDistances = Dijkstra.distanceBetween(board.getSetup().graph, move.source(), detectiveLocations);
 		List<Integer> distances = Dijkstra.distanceBetween(board.getSetup().graph, destination, detectiveLocations);
 
-		int oldMin = getMin(oldDistances);
-		int min = getMin(distances);
-		int sum = getSum(distances);
+		int oldMin = Collections.min(oldDistances);
+		int min = Collections.min(distances);
 
-		float score = 100 + sum / distances.size();
+		float score = 100 + getAvg(distances);
 
 		//If MrX's move places him within 2 stations of any detectives, subtract 50 from the move's score
 		double minPenalty = min <= 2 ? 50 : 0;
@@ -138,8 +116,6 @@ public class MyAi implements Ai {
 
 		//Small penalty for secret moves so that they are not wasted by the AI
 		if (isSecretMove) score -= 0.1;
-
-		System.out.println(move.toString() + " - " + score + "(min penalty: " + minPenalty + ", double penalty: " + doublePenalty + ")");
 
 		return score;
 	}
@@ -158,12 +134,12 @@ public class MyAi implements Ai {
 
 
 		//Weighted sum of the top 4 scoring moves for the second round
-		float scoreSum = 0;
+		float weightedSum = 0;
 		for(int i = 0; i < 4; i++){
-			scoreSum += newScores.get(i).score * (1-0.25*i);
+			weightedSum += newScores.get(i).score * (1-0.25*i);
 		}
 
-		scoreSum /= 30;
+		weightedSum /= 30;
 
 		//Calculates how many available moves MrX has after advancing with the move
 		//The more available moves after the move has been played, the higher the score increases by
@@ -172,9 +148,9 @@ public class MyAi implements Ai {
 			List<Move> secondNewMoves = stateAfter.advance(m.move).getAvailableMoves().asList();
 			secondOrderMovesSum += secondNewMoves.size();
 		}
-		scoreSum += secondOrderMovesSum / 50;
+		weightedSum += secondOrderMovesSum / 50;
 
-		return scoreSum;
+		return weightedSum;
 	}
 
 	List<Integer> getDetectiveLocations(Board board){
