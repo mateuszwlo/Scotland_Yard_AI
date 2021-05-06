@@ -4,6 +4,7 @@ import java.lang.reflect.Array;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
 
@@ -26,66 +27,122 @@ public class MyAi implements Ai {
 		// returns a random move, replace with your own implementation
 		var moves = board.getAvailableMoves().asList();
 
-		float bestScore = -1;
-		Move bestMove = moves.get(0);
+		List<ScoredMove> scoredMoves = moves.stream()
+				.map((Move m) -> new ScoredMove(m, score(board, m)))
+				.collect(Collectors.toList());
 
-		for(Move move : moves){
-			float moveScore  = score(board, move);
+		Collections.sort(scoredMoves);
+		Collections.reverse(scoredMoves);
 
-			if(moveScore > bestScore){
-				bestMove = move;
-				bestScore = moveScore;
-			}
+		List<ScoredMove> withoutDuplicates = removeDuplicates(scoredMoves);
+
+		List<ScoredMove> topMoves = withoutDuplicates.subList(0, Math.min(withoutDuplicates.size(), 10));
+
+		//Check for duplicate destinations
+
+		for(int i = 0; i < topMoves.size(); i++){
+			ScoredMove move = topMoves.get(i);
+			topMoves.set(i, new ScoredMove(move.m, move.score + lookAhead(board, move.m)));
+
+			System.out.println(move.m + " - " + topMoves.get(i).score);
 		}
 
+		Collections.sort(topMoves);
+		Collections.reverse(topMoves);
+
+		Move bestMove = topMoves.get(0).m;
+
 		System.out.println("\n");
-		System.out.println(bestScore+ bestMove.toString());
+		System.out.println(topMoves.get(0).score+ bestMove.toString());
+		System.out.println("\n\n\n\n");
 		return bestMove;
 	}
 
-	float score(Board board, Move move){
+	int getDestination(Move move){
 		int destination;
 		boolean isDoubleMove = move.getClass().equals(Move.DoubleMove.class);
 		if(isDoubleMove) destination = ((Move.DoubleMove) move).destination2;
 		else destination = ((Move.SingleMove) move).destination;
+
+		return destination;
+	}
+
+	List<ScoredMove> removeDuplicates(List<ScoredMove> scoredMoves){
+		List<ScoredMove> withoutDuplicates = new ArrayList<>();
+		withoutDuplicates.add(scoredMoves.get(0));
+
+		for(int i = 1; i < scoredMoves.size(); i++){
+			int dest = getDestination(scoredMoves.get(i).m);
+			boolean isAlreadyAdded = false;
+			for(int j = 0; j < withoutDuplicates.size(); j++){
+				if(getDestination(withoutDuplicates.get(j).m) == dest) {
+					isAlreadyAdded = true;
+					break;
+				}
+			}
+			if(!isAlreadyAdded) withoutDuplicates.add(scoredMoves.get(i));
+		}
+
+		return withoutDuplicates;
+	}
+
+	float score(Board board, Move move){
+		int destination = getDestination(move);
+		boolean isDoubleMove = move.getClass().equals(Move.DoubleMove.class);
 		boolean isSecretMove = ((ImmutableList)(move.tickets())).contains(ScotlandYard.Ticket.SECRET);
 
 		List<Integer> detectiveLocations = getDetectiveLocations(board);
+		List<Integer> oldDistances = dijkstras(board.getSetup().graph, move.source(), detectiveLocations);// we're calculating this multiple times -> move up in call stack
 		List<Integer> distances = dijkstras(board.getSetup().graph, destination, detectiveLocations);
 
-		int roundsTotal = board.getSetup().rounds.size();
-		int roundsLeft = roundsTotal - board.getMrXTravelLog().size();
-		int doubleMovesLeft = board.getPlayerTickets(move.commencedBy()).get().getCount(ScotlandYard.Ticket.DOUBLE);
+		int oldMin = distances.get(0);
+
+		for(Integer i : oldDistances){
+			if(i < oldMin) oldMin = i;
+		}
 
 		int min = distances.get(0);
 		int sum = 0;
 
 		for(Integer i : distances){
-			sum += i;
 			if(i < min) min = i;
+			if(i > 5) continue;
+			sum += i;
 		}
 
-		float score = 20 * sum / distances.size();
+		float score = 100 + sum / distances.size();
 
-		double minPenalty = 0;
-		if (min < 5) {
-			score -= 400 * (1 / Math.pow(min, 2));
-			minPenalty = 400 * (1 / Math.pow(min, 2));
-		}
+		double minPenalty = min <= 2 ? 50 : 0;
+		score -= minPenalty;
 
-		double doublePenalty = 0;
-		if (isDoubleMove && roundsLeft > doubleMovesLeft) {
-			final float penaltyScalerFuncArg = 7 * (roundsTotal - roundsLeft)/(roundsTotal - doubleMovesLeft);
-			final float penaltyScaler = Math.max(10 - 2 * penaltyScalerFuncArg, 7 - penaltyScalerFuncArg);
-			score -= (min == 1 ? 80 : 40) * penaltyScaler;
-			doublePenalty = (min == 1 ? 80 : 40) * penaltyScaler;
-		}
+		double doublePenalty = isDoubleMove && oldMin >= 2 ? (oldMin >= 5 ? 50 : 20) : 0;
+		score -= doublePenalty;
 
+//		//Penalty for certain tickets
 		if (isSecretMove) score -= 0.1;
 
 		System.out.println(move.toString() + " - " + score + "(min penalty: " + minPenalty + ", double penalty: " + doublePenalty + ")");
 
 		return score;
+	}
+
+	float lookAhead(Board board, Move move){
+		List<Move> newMoves = ((Board.GameState) board).advance(move).getAvailableMoves().asList();
+
+		List<ScoredMove> newScores = newMoves.stream().map((Move m) -> new ScoredMove(m, score(board, m))).collect(Collectors.toList());
+		newScores.sort(null);
+
+		float scoreSum = 0;
+		for(int i = 0; i < 4; i++){
+			scoreSum += newScores.get(i).score * (1-0.25*i);
+		}
+
+		scoreSum /= 30;
+
+//		int availableMoves = removeDuplicates(newScores).size();
+//		if (availableMoves < 5) scoreSum -= availableMoves < 3 ? 50 : 15;
+
+		return scoreSum;
 	}
 
 	List<Integer> getDetectiveLocations(Board board){
@@ -177,5 +234,26 @@ class NodeWrapper{
 		if (o == null || getClass() != o.getClass()) return false;
 		NodeWrapper that = (NodeWrapper) o;
 		return node == that.node;
+	}
+}
+
+class ScoredMove implements Comparable{
+	Move m;
+	float score;
+
+	public ScoredMove(Move m, float score) {
+		this.m = m;
+		this.score = score;
+	}
+
+	@Override
+	public boolean equals(Object obj) {
+		return score == ((ScoredMove) obj).score;
+	}
+
+	@Override
+	public int compareTo(Object o) {
+		ScoredMove m = (ScoredMove) o;
+		return Float.compare(score, m.score);
 	}
 }
