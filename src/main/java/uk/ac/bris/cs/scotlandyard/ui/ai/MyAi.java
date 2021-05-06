@@ -1,20 +1,15 @@
 package uk.ac.bris.cs.scotlandyard.ui.ai;
 
-import java.lang.reflect.Array;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import javax.annotation.Nonnull;
 
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
-import com.google.common.graph.EndpointPair;
 import com.google.common.graph.ImmutableValueGraph;
 import io.atlassian.fugue.Pair;
-import org.w3c.dom.Node;
 import uk.ac.bris.cs.scotlandyard.model.*;
 
 public class MyAi implements Ai {
@@ -24,33 +19,35 @@ public class MyAi implements Ai {
 	@Nonnull @Override public Move pickMove(
 			@Nonnull Board board,
 			Pair<Long, TimeUnit> timeoutPair) {
-		// returns a random move, replace with your own implementation
 		var moves = board.getAvailableMoves().asList();
 
+		//Calculates score for each available move and stores in a list of object ScoredMove
 		List<ScoredMove> scoredMoves = moves.stream()
 				.map((Move m) -> new ScoredMove(m, score(board, m)))
 				.collect(Collectors.toList());
 
+		//Sorting the list and reversing so that move at index 0 has the highest score
 		Collections.sort(scoredMoves);
 		Collections.reverse(scoredMoves);
 
+		//Removing moves with the same destination but different required tickets
 		List<ScoredMove> withoutDuplicates = removeDuplicates(scoredMoves);
 
+		//Only look ahead a second move for the top 10 moves or the the number of available non duplicate moves
 		List<ScoredMove> topMoves = withoutDuplicates.subList(0, Math.min(withoutDuplicates.size(), 10));
-
-		//Check for duplicate destinations
 
 		for(int i = 0; i < topMoves.size(); i++){
 			ScoredMove move = topMoves.get(i);
-			topMoves.set(i, new ScoredMove(move.m, move.score + lookAhead(board, move.m)));
+			//Updating score of move based on look ahead function
+			topMoves.set(i, new ScoredMove(move.move, move.score + lookAhead(board, move.move)));
 
-			System.out.println(move.m + " - " + topMoves.get(i).score);
+			System.out.println(move.move + " - " + topMoves.get(i).score);
 		}
 
 		Collections.sort(topMoves);
 		Collections.reverse(topMoves);
 
-		Move bestMove = topMoves.get(0).m;
+		Move bestMove = topMoves.get(0).move;
 
 		System.out.println("\n");
 		System.out.println(topMoves.get(0).score+ bestMove.toString());
@@ -59,12 +56,17 @@ public class MyAi implements Ai {
 	}
 
 	int getDestination(Move move){
-		int destination;
-		boolean isDoubleMove = move.getClass().equals(Move.DoubleMove.class);
-		if(isDoubleMove) destination = ((Move.DoubleMove) move).destination2;
-		else destination = ((Move.SingleMove) move).destination;
+		return  move.visit(new Move.FunctionalVisitor<>(
+				m -> m.destination,
+				m -> m.destination2
+		));
+	}
 
-		return destination;
+	boolean isDoubleMove(Move move){
+		return  move.visit(new Move.FunctionalVisitor<>(
+				m -> false,
+				m -> true
+		));
 	}
 
 	List<ScoredMove> removeDuplicates(List<ScoredMove> scoredMoves){
@@ -72,10 +74,12 @@ public class MyAi implements Ai {
 		withoutDuplicates.add(scoredMoves.get(0));
 
 		for(int i = 1; i < scoredMoves.size(); i++){
-			int dest = getDestination(scoredMoves.get(i).m);
+			int dest = getDestination(scoredMoves.get(i).move);
 			boolean isAlreadyAdded = false;
+			//Loop over each element in withoutDuplicates list and see if any element has the same destination
+			//If not, add the move to the list
 			for(int j = 0; j < withoutDuplicates.size(); j++){
-				if(getDestination(withoutDuplicates.get(j).m) == dest) {
+				if(getDestination(withoutDuplicates.get(j).move) == dest) {
 					isAlreadyAdded = true;
 					break;
 				}
@@ -86,39 +90,52 @@ public class MyAi implements Ai {
 		return withoutDuplicates;
 	}
 
-	float score(Board board, Move move){
-		int destination = getDestination(move);
-		boolean isDoubleMove = move.getClass().equals(Move.DoubleMove.class);
-		boolean isSecretMove = ((ImmutableList)(move.tickets())).contains(ScotlandYard.Ticket.SECRET);
+	int min(List<Integer> list){
+		int min = list.get(0);
 
-		List<Integer> detectiveLocations = getDetectiveLocations(board);
-		List<Integer> oldDistances = dijkstras(board.getSetup().graph, move.source(), detectiveLocations);// we're calculating this multiple times -> move up in call stack
-		List<Integer> distances = dijkstras(board.getSetup().graph, destination, detectiveLocations);
-
-		int oldMin = distances.get(0);
-
-		for(Integer i : oldDistances){
-			if(i < oldMin) oldMin = i;
+		for(Integer i : list){
+			if(i < min) min = i;
 		}
 
-		int min = distances.get(0);
+		return min;
+	}
+
+	int sum(List<Integer> list){
 		int sum = 0;
 
-		for(Integer i : distances){
-			if(i < min) min = i;
-			if(i > 5) continue;
+		for(Integer i : list){
 			sum += i;
 		}
 
+		return sum;
+	}
+
+	float score(Board board, Move move){
+		int destination = getDestination(move);
+		boolean isDoubleMove = isDoubleMove(move);
+		boolean isSecretMove = ((ImmutableList)(move.tickets())).contains(ScotlandYard.Ticket.SECRET);
+
+		List<Integer> detectiveLocations = getDetectiveLocations(board);
+		//List of the distances between MrX and all the detectives before and after move
+		List<Integer> oldDistances = dijkstras(board.getSetup().graph, move.source(), detectiveLocations);
+		List<Integer> distances = dijkstras(board.getSetup().graph, destination, detectiveLocations);
+
+		int oldMin = min(oldDistances);
+		int min = min(distances);
+		int sum = sum(distances);
+
 		float score = 100 + sum / distances.size();
 
+		//If MrX's move places him within 2 stations of any detectives, subtract 50 from the move's score
 		double minPenalty = min <= 2 ? 50 : 0;
 		score -= minPenalty;
 
-		double doublePenalty = isDoubleMove && oldMin >= 2 ? (oldMin >= 5 ? 50 : 20) : 0;
+		//Different penalties depending on how far MrX was before using a double move
+		//50 if 5 or more stations away from any detectives, 20 for 3 or more stations away
+		double doublePenalty = isDoubleMove && oldMin >= 3 ? (oldMin >= 5 ? 50 : 20) : 0;
 		score -= doublePenalty;
 
-//		//Penalty for certain tickets
+		//Small penalty for secret moves so that they are not wasted by the AI
 		if (isSecretMove) score -= 0.1;
 
 		System.out.println(move.toString() + " - " + score + "(min penalty: " + minPenalty + ", double penalty: " + doublePenalty + ")");
@@ -127,10 +144,17 @@ public class MyAi implements Ai {
 	}
 
 	float lookAhead(Board board, Move move){
-		List<Move> newMoves = ((Board.GameState) board).advance(move).getAvailableMoves().asList();
+		//Gets the new gameState after playing the move and fetches the available moves for the next round
+		Board.GameState stateAfter = ((Board.GameState) board).advance(move);
+		List<Move> newMoves = stateAfter.getAvailableMoves().asList();
 
+		//Calculates score for each available move and stores in a list of object ScoredMove
 		List<ScoredMove> newScores = newMoves.stream().map((Move m) -> new ScoredMove(m, score(board, m))).collect(Collectors.toList());
-		newScores.sort(null);
+
+		//Sorting the list and reversing so that move at index 0 has the highest score
+		Collections.sort(newScores);
+		Collections.reverse(newScores);
+
 
 		float scoreSum = 0;
 		for(int i = 0; i < 4; i++){
@@ -139,8 +163,12 @@ public class MyAi implements Ai {
 
 		scoreSum /= 30;
 
-//		int availableMoves = removeDuplicates(newScores).size();
-//		if (availableMoves < 5) scoreSum -= availableMoves < 3 ? 50 : 15;
+		int secondOrderMovesSum = 0;
+		for(ScoredMove m : newScores){
+			List<Move> secondNewMoves = stateAfter.advance(m.move).getAvailableMoves().asList();
+			secondOrderMovesSum += secondNewMoves.size();
+		}
+		scoreSum -= secondOrderMovesSum / 50;
 
 		return scoreSum;
 	}
@@ -214,46 +242,5 @@ public class MyAi implements Ai {
 	@Override
 	public void onTerminate() {
 
-	}
-}
-
-class NodeWrapper{
-	int node;
-	double distance;
-	int previous;
-
-	public NodeWrapper(int node, double distance, int previous) {
-		this.node = node;
-		this.distance = distance;
-		this.previous = previous;
-	}
-
-	@Override
-	public boolean equals(Object o) {
-		if (this == o) return true;
-		if (o == null || getClass() != o.getClass()) return false;
-		NodeWrapper that = (NodeWrapper) o;
-		return node == that.node;
-	}
-}
-
-class ScoredMove implements Comparable{
-	Move m;
-	float score;
-
-	public ScoredMove(Move m, float score) {
-		this.m = m;
-		this.score = score;
-	}
-
-	@Override
-	public boolean equals(Object obj) {
-		return score == ((ScoredMove) obj).score;
-	}
-
-	@Override
-	public int compareTo(Object o) {
-		ScoredMove m = (ScoredMove) o;
-		return Float.compare(score, m.score);
 	}
 }
