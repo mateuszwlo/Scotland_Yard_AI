@@ -12,6 +12,7 @@ import com.google.common.graph.ImmutableValueGraph;
 import io.atlassian.fugue.Pair;
 import uk.ac.bris.cs.scotlandyard.model.*;
 
+
 public class MyAi implements Ai {
 
 	@Nonnull @Override public String name() { return "Princess Phillip"; }
@@ -90,7 +91,7 @@ public class MyAi implements Ai {
 		return withoutDuplicates;
 	}
 
-	int min(List<Integer> list){
+	int getMin(List<Integer> list){
 		int min = list.get(0);
 
 		for(Integer i : list){
@@ -100,7 +101,7 @@ public class MyAi implements Ai {
 		return min;
 	}
 
-	int sum(List<Integer> list){
+	int getSum(List<Integer> list){
 		int sum = 0;
 
 		for(Integer i : list){
@@ -117,12 +118,12 @@ public class MyAi implements Ai {
 
 		List<Integer> detectiveLocations = getDetectiveLocations(board);
 		//List of the distances between MrX and all the detectives before and after move
-		List<Integer> oldDistances = dijkstras(board.getSetup().graph, move.source(), detectiveLocations);
-		List<Integer> distances = dijkstras(board.getSetup().graph, destination, detectiveLocations);
+		List<Integer> oldDistances = Dijkstra.distanceBetween(board.getSetup().graph, move.source(), detectiveLocations);
+		List<Integer> distances = Dijkstra.distanceBetween(board.getSetup().graph, destination, detectiveLocations);
 
-		int oldMin = min(oldDistances);
-		int min = min(distances);
-		int sum = sum(distances);
+		int oldMin = getMin(oldDistances);
+		int min = getMin(distances);
+		int sum = getSum(distances);
 
 		float score = 100 + sum / distances.size();
 
@@ -156,6 +157,7 @@ public class MyAi implements Ai {
 		Collections.reverse(newScores);
 
 
+		//Weighted sum of the top 4 scoring moves for the second round
 		float scoreSum = 0;
 		for(int i = 0; i < 4; i++){
 			scoreSum += newScores.get(i).score * (1-0.25*i);
@@ -163,12 +165,14 @@ public class MyAi implements Ai {
 
 		scoreSum /= 30;
 
+		//Calculates how many available moves MrX has after advancing with the move
+		//The more available moves after the move has been played, the higher the score increases by
 		int secondOrderMovesSum = 0;
 		for(ScoredMove m : newScores){
 			List<Move> secondNewMoves = stateAfter.advance(m.move).getAvailableMoves().asList();
 			secondOrderMovesSum += secondNewMoves.size();
 		}
-		scoreSum -= secondOrderMovesSum / 50;
+		scoreSum += secondOrderMovesSum / 50;
 
 		return scoreSum;
 	}
@@ -181,57 +185,6 @@ public class MyAi implements Ai {
 		}
 
 		return detectiveLocations;
-	}
-
-	List<Integer> dijkstras(ImmutableValueGraph graph, int mrXLocation, List<Integer> detectiveLocations){
-		Set<NodeWrapper> allNodes = new HashSet<>();
-		Set<NodeWrapper> visted = new HashSet<>();
-		Set<NodeWrapper> unvisited = new HashSet<>();
-		visted.add(new NodeWrapper(mrXLocation, 0, (int) Double.POSITIVE_INFINITY));
-
-		for(Object n : graph.nodes()) {
-			if(n.equals(mrXLocation)) allNodes.add(new NodeWrapper((int) n, 0, (int) Double.POSITIVE_INFINITY));
-			else {
-				NodeWrapper node = new NodeWrapper((int) n, distanceBetweenNodes(graph, (int) n, mrXLocation),  mrXLocation);
-				allNodes.add(node);
-				unvisited.add(node);
-			}
-		}
-
-		while (!unvisited.isEmpty()) {
-			NodeWrapper currentVertex = unvisited.iterator().next();
-
-			for(NodeWrapper node : unvisited){
-				if(node.distance < currentVertex.distance) currentVertex = node;
-			}
-
-			visted.add(currentVertex);
-			unvisited.remove(currentVertex);
-
-			for (NodeWrapper node : unvisited) {
-				node.distance = Math.min(node.distance, currentVertex.distance + distanceBetweenNodes(graph, node.node, currentVertex.node));
-			}
-
-		}
-
-		List<Integer> distances = new ArrayList<>();
-
-		for(int detective : detectiveLocations){
-			for(NodeWrapper node : allNodes){
-				if(detective == node.node) {
-					distances.add((int) node.distance);
-					break;
-				}
-
-			}
-		}
-
-		return distances;
-
-	}
-
-	double distanceBetweenNodes(ImmutableValueGraph graph, int n1, int n2){
-		return graph.hasEdgeConnecting(n1, n2) ? 1 : Double.POSITIVE_INFINITY;
 	}
 
 	@Override
